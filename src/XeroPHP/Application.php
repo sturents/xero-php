@@ -62,11 +62,7 @@ abstract class Application
     public function __construct(array $user_config)
     {
         //better here for overriding
-        $this->config = array_replace_recursive(
-            self::$_config_defaults,
-            static::$_type_config_defaults,
-            $user_config
-        );
+        $this->setConfig($user_config);
 
         $this->oauth_client = new Client($this->config['oauth']);
     }
@@ -108,6 +104,48 @@ abstract class Application
         return $this->config[$key];
     }
 
+    /**
+    * @param string $config
+    * @param mixed $option
+    * @param mixed $value
+    * @return mixed
+    * @throws Exception
+    */
+    public function getConfigOption($config, $option) {
+        if (!isset($this->getConfig($config)[$option])) {
+            throw new Exception("Invalid configuration option [$option]");
+        }
+        return $this->getConfig($config)[$option];
+    }
+
+    /**
+     * @param array $config
+     * @return array
+     */
+    public function setConfig($config) {
+        $this->config = array_replace_recursive(
+            self::$_config_defaults,
+            static::$_type_config_defaults,
+            $config
+        );
+
+        return $this->config;
+    }
+
+    /**
+     * @param string $config
+     * @param mixed $option
+     * @param mixed $value
+     * @return array
+     * @throws Exception
+     */
+    public function setConfigOption($config, $option, $value) {
+        if (!isset($this->config[$config])) {
+            throw new Exception("Invalid configuration key [$config]");
+        }
+        $this->config[$config][$option] = $value;
+        return $this->config;
+    }
 
     /**
      * Validates and expands the provided model class to a full PHP class
@@ -118,16 +156,29 @@ abstract class Application
      */
     public function validateModelClass($class)
     {
-        $config = $this->getConfig('xero');
-
-        if ($class[0] !== '\\') {
-            $class = sprintf('%s\\%s', $config['model_namespace'], $class);
+        if (class_exists($class)) {
+            return $class;
         }
+
+        $class = $this->prependConfigNamespace($class);
+
         if (!class_exists($class)) {
             throw new Exception("Class does not exist [$class]");
         }
 
         return $class;
+    }
+
+
+    /**
+     * Prepend the configuration namespace to the class.
+     *
+     * @param  string  $class
+     * @return string
+     */
+    protected function prependConfigNamespace($class)
+    {
+        return $this->getConfig('xero')['model_namespace'].'\\'.$class;
     }
 
 
@@ -194,11 +245,11 @@ abstract class Application
         }
         $object->validate();
 
-        //In this case it's new
         if ($object->hasGUID()) {
             $method = $object::supportsMethod(Request::METHOD_POST) ? Request::METHOD_POST : Request::METHOD_PUT;
             $uri = sprintf('%s/%s', $object::getResourceURI(), $object->getGUID());
         } else {
+            //In this case it's new
             $method = $object::supportsMethod(Request::METHOD_PUT) ? Request::METHOD_PUT : Request::METHOD_POST;
             $uri = $object::getResourceURI();
             //@todo, bump version so you must create objects with app context.
@@ -231,17 +282,17 @@ abstract class Application
      * @return Remote\Response
      * @throws Exception
      */
-    public function saveAll($objects)
+    public function saveAll($objects, $checkGuid = true)
     {
         $objects = array_values($objects);
-        
+
         //Just get one type to compare with, doesn't matter which.
         $current_object = $objects[0];
         /**
          * @var Object $type
          */
         $type = get_class($current_object);
-        $has_guid =  $current_object->hasGUID();
+        $has_guid = $checkGuid ? $current_object->hasGUID() : true;
         $object_arrays = [];
 
         foreach ($objects as $object) {
@@ -259,7 +310,7 @@ abstract class Application
 
         $request_method = $has_guid ? Request::METHOD_POST : Request::METHOD_PUT;
 
-        $url = new URL($this, $type::getResourceURI());
+        $url = new URL($this, $type::getResourceURI(), $type::getAPIStem());
         $request = new Request($this, $url, $request_method);
 
         //This might need to be parsed and stored some day.
